@@ -1,140 +1,124 @@
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-const bodyParser = require('body-parser');
 const cors = require('cors');
-require('dotenv').config();
 const app = express();
-
 
 app.use(cors());
 app.use(express.static('public'));
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+app.use(express.urlencoded({ extended: true }));
 
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('Could not connect to MongoDB:', err));
 
-app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/views/index.html')
-});
-
-
-/* Connect to MongoDB */
-mongoose.connect(process.env['MONGO_URI'])
-  .then(() => console.log('Connected to MongoDB Successfully'))
-  .catch((error) => console.log('Connection Failed !!\n', error));
-/* Connect to MongoDB */
-
-
-/* Exercise Tracker API */
+// Define Schemas
 const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, },
+  username: { type: String, required: true }
 });
 
 const exerciseSchema = new mongoose.Schema({
-  userId: { type: String, required: true, },
-  description: { type: String, required: true, },
-  duration: { type: Number, required: true, },
-  date: { type: Date, default: Date.now, },
+  userId: { type: String, required: true },
+  description: { type: String, required: true },
+  duration: { type: Number, required: true },
+  date: { type: Date, required: false }
 });
 
-const User = mongoose.model('Users', userSchema, 'Users');
-const Exercise = mongoose.model('Exercises', exerciseSchema, 'Exercises');
+const User = mongoose.model('User', userSchema);
+const Exercise = mongoose.model('Exercise', exerciseSchema);
 
+// POST /api/users to create a new user
 app.post('/api/users', async (req, res) => {
   try {
-    const existingUser = await User.findOne({ username: req.body.username });
-    if (existingUser) {
-      res.json({ error: 'User already exists', username: existingUser.username, _id: existingUser._id });
-    } else {
-      const user = new User({ username: req.body.username });
-      await user.save();
-      res.json({ username: user.username, _id: user._id });
-    }
-  } catch (error) {
-    res.status(500).json({ error: 'Error creating user' });
+    const { username } = req.body;
+    const newUser = new User({ username });
+    const savedUser = await newUser.save();
+    res.json({ username: savedUser.username, _id: savedUser._id });
+  } catch (err) {
+    res.json({ error: 'Error creating user' });
   }
 });
 
+// GET /api/users to get a list of all users
 app.get('/api/users', async (req, res) => {
   try {
-    const users = await User.find();
+    const users = await User.find({}, 'username _id');
     res.json(users);
-  } catch (error) {
-    res.status(500).json({ error: 'Error getting users' });
+  } catch (err) {
+    res.json({ error: 'Error fetching users' });
   }
 });
 
+// POST /api/users/:_id/exercises to add an exercise
 app.post('/api/users/:_id/exercises', async (req, res) => {
   try {
     const { _id } = req.params;
     const { description, duration, date } = req.body;
 
-    const user = await User.findById(_id);
+    let exerciseDate = date ? new Date(date) : new Date();
 
-    const exercise = new Exercise({ userId: _id, description: description, duration: duration, date: date });
-    await exercise.save();
-
-    res.json({
-      _id: user._id,
-      username: user.username,
-      description: exercise.description,
-      duration: exercise.duration,
-      date: exercise.date.toDateString()
+    const newExercise = new Exercise({
+      userId: _id,
+      description,
+      duration: parseInt(duration),
+      date: exerciseDate
     });
-  } catch (error) {
-    console.log('Post Exercise Error \n', error);
-    res.status(500).json({ error: 'Error Adding Exercise' });
-  }
-});
 
-app.get('/api/users/:_id/logs', async (req, res) => {
-  try {
-    const { _id } = req.params;
-    const { from, to, limit } = req.query;
+    const savedExercise = await newExercise.save();
 
     const user = await User.findById(_id);
-
-    const exercises = await Exercise.find({ userId: _id })
-      .where('date')
-      .gte(from || '1900-01-01')
-      .lte(to || '2100-12-31')
-      .limit(parseInt(limit) || 0)
-      .exec();
-
-    const log = exercises.map((exercise) => ({
-      description: exercise.description,
-      duration: exercise.duration,
-      date: exercise.date.toDateString(),
-    }));
-
-    res.json({ _id: user._id, username: user.username, count: log.length, log });
-  } catch (error) {
-    console.log('Logs Error\n', error);
-    res.status(500).json({ error: 'Error Getting exercise Logs' })
+    res.json({
+      username: user.username,
+      description: savedExercise.description,
+      duration: savedExercise.duration,
+      date: savedExercise.date.toDateString(),
+      _id: user._id
+    });
+  } catch (err) {
+    res.json({ error: 'Error adding exercise' });
   }
 });
-/* Exercise Tracker API */
 
-
-/* Admin Remove All (not required for completion of exercise tracker project) */
-const adminPassword = process.env.ADMIN_PASSWORD;
-
-app.all('/api/admin/remove-all/:password', async (req, res) => {
-  try {
-    const providedPassword = req.params.password;
-    if (providedPassword === adminPassword) {
-      await User.deleteMany({});
-      await Exercise.deleteMany({});
-      res.json({ message: 'All documents from Users and Exercises removed successfully' });
-    } else {
-      res.status(401).json({ error: 'Unauthorized' });
+// GET /api/users/:_id/logs to get a user's exercise log
+app.get('/api/users/:_id/logs', async (req, res) => {
+    try {
+      const { _id } = req.params;
+      const { from, to, limit } = req.query;
+  
+      // Date filter if 'from' and 'to' are provided
+      let dateFilter = {};
+      if (from || to) {
+        dateFilter.date = {};
+        if (from) dateFilter.date.$gte = new Date(from);
+        if (to) dateFilter.date.$lte = new Date(to);
+      }
+  
+      // Find exercises based on userId and optional date filter
+      let exercisesQuery = Exercise.find({ userId: _id, ...dateFilter });
+      if (limit) {
+        exercisesQuery = exercisesQuery.limit(parseInt(limit));
+      }
+      const exercises = await exercisesQuery.exec();
+  
+      const user = await User.findById(_id);
+  
+      // Build the response
+      res.json({
+        username: user.username,
+        count: exercises.length,  // Total number of exercises
+        _id: user._id,
+        log: exercises.map(e => ({
+          description: e.description,  // Ensure description is a string
+          duration: e.duration,  // Ensure duration is a number
+          date: e.date.toDateString()  // Format date using toDateString()
+        }))
+      });
+    } catch (err) {
+      res.json({ error: 'Error fetching logs' });
     }
-  } catch (error) {
-    res.status(500).json({ error: 'Error removing documents' });
-  }
-});
-/* Admin Remove All (not required for completion of exercise tracker project) */
-
+  });
+  
 
 const listener = app.listen(process.env.PORT || 3000, () => {
-  console.log(`Your App is Listening on Port : ${listener.address().port}`);
+  console.log('Your app is listening on port ' + listener.address().port);
 });
