@@ -55,7 +55,8 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
     const { _id } = req.params;
     const { description, duration, date } = req.body;
 
-    let exerciseDate = date ? new Date(date) : new Date();
+    // Parse the date input correctly (falling back to the current date if not provided)
+    let exerciseDate = date ? new Date(date) : new Date();  // Ensure it's a Date object
 
     const newExercise = new Exercise({
       userId: _id,
@@ -71,7 +72,7 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
       username: user.username,
       description: savedExercise.description,
       duration: savedExercise.duration,
-      date: savedExercise.date.toDateString(),
+      date: savedExercise.date.toDateString(),  // Convert to readable date string
       _id: user._id
     });
   } catch (err) {
@@ -81,43 +82,39 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
 
 // GET /api/users/:_id/logs to get a user's exercise log
 app.get('/api/users/:_id/logs', async (req, res) => {
-    try {
-      const { _id } = req.params;
-      const { from, to, limit } = req.query;
-  
-      // Date filter if 'from' and 'to' are provided
-      let dateFilter = {};
-      if (from || to) {
-        dateFilter.date = {};
-        if (from) dateFilter.date.$gte = new Date(from);
-        if (to) dateFilter.date.$lte = new Date(to);
-      }
-  
-      // Find exercises based on userId and optional date filter
-      let exercisesQuery = Exercise.find({ userId: _id, ...dateFilter });
-      if (limit) {
-        exercisesQuery = exercisesQuery.limit(parseInt(limit));
-      }
-      const exercises = await exercisesQuery.exec();
-  
-      const user = await User.findById(_id);
-  
-      // Build the response
-      res.json({
-        username: user.username,
-        count: exercises.length,  // Total number of exercises
-        _id: user._id,
-        log: exercises.map(e => ({
-          description: e.description,  // Ensure description is a string
-          duration: e.duration,  // Ensure duration is a number
-          date: e.date.toDateString()  // Format date using toDateString()
-        }))
-      });
-    } catch (err) {
-      res.json({ error: 'Error fetching logs' });
+  try {
+    const { _id } = req.params;
+    const { from, to, limit } = req.query;
+
+    // Parse 'from' and 'to' dates into Date objects, if provided
+    let dateFilter = {};
+    if (from) dateFilter.date = { $gte: new Date(from) };
+    if (to) dateFilter.date = { ...dateFilter.date, $lte: new Date(to) };
+
+    // Find exercises based on userId and optional date filter
+    let exercisesQuery = Exercise.find({ userId: _id, ...dateFilter });
+    if (limit) {
+      exercisesQuery = exercisesQuery.limit(parseInt(limit));
     }
-  });
-  
+    const exercises = await exercisesQuery.exec();
+
+    const user = await User.findById(_id);
+
+    // Build the response
+    res.json({
+      username: user.username,
+      count: exercises.length,  // Total number of exercises
+      _id: user._id,
+      log: exercises.map(e => ({
+        description: e.description,  // Ensure description is a string
+        duration: e.duration,  // Ensure duration is a number
+        date: e.date.toDateString()  // Format date using toDateString()
+      }))
+    });
+  } catch (err) {
+    res.json({ error: 'Error fetching logs' });
+  }
+});
 
 const listener = app.listen(process.env.PORT || 3000, () => {
   console.log('Your app is listening on port ' + listener.address().port);
